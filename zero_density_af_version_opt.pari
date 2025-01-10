@@ -1,0 +1,573 @@
+/* Original code by Allysa Lumley, errors presumably added during significant revision by Andrew Fiori */
+
+/*USER FUNCTIONS
+   
+    get_A_B(H0,s,{Aggress=10})
+       returns pair [A,B] where A is optimal, and B is optimal relative to A
+
+    PrintTable(H0,s_start,s_end,s_step,{Aggress=20}) 
+    PrintTable_html(H0,s_start,s_end,s_step,{Aggress=10})
+    PrintTable_tex(H0,s_start,s_end,s_step,{Aggress=10})
+
+    Aggress - this parameter describes the optimization aggressiveness and the final accuracy output for tables
+
+
+    load_ZD_cache()   - loads precomputed values
+    save_ZD_cache()   - overwrites existing precomputed values
+
+
+    AF NOTE: using aggress>default precision (38) may not work as intended.
+
+*/
+
+/**** START GLOBAL CONSTANTS ****/
+
+/**************** AF QUESTION:  ARE THESE OPTIMAL???
+                                SHOULD THEN BE USER CONFIGURABLE???
+*******************************************************/
+
+/*Halfline zeta constants*/
+/*a1=0.63;*/
+/*a1=0.77;*/
+a1=0.618;
+/*** AF Comment: More precisely
+    < 200  -> 0.595
+    200-t0 -> 0.62995229078854760212674163332583298065  <--- could use this
+    > t0   -> 0.62976849140328525430869193266573009285
+***/
+/*a2=2.851;*/
+a2 = 6/exp(1)*a1-zeta(1/2);
+/*** AF Comment: The proof of above number in the theorem is wrong, that said...
+     more precisely (with a1=0.63) one can supposedly prove that you can use
+    a2=6/exp(1)*a1-zeta(1/2) = 2.8509387964376387885205790037256200914
+     Can technically improve this further as
+    abs(zeta(1/2 + exp(-6)*I)) = 1.4603376992688342626454929506516605487
+***/
+a3=-6*a1/exp(1)+a2;
+/*** AF Comment: more precisely (note: we only ever use the square of this)
+    a3=-zeta(1/2) = 1.4603545088095868128894991525152980125
+***/
+    
+
+/*Arithemtic sums bounds due to Ramare */ 
+b1=0.62;
+/**** AF Comment: Ramare proof gives
+   6/Pi^2+0.1333/sqrt(1700)=0.61116010173576094720028380239837374206
+****/
+b2=1.048;
+/**** AF Comment: Ramare suggests he proves
+   6/Pi^2* 1.7171176851 + 0.00340 = 1.0472823778451381200
+  
+  Running his code I think suggests one of:
+    6/Pi^2* 1.7171176851 + 0.0033963694816684012633 = 1.0472787473268065239873431305807088347
+        or
+    6/Pi^2* 1.7171176851 + 0.00319121034416021244421219 = 1.0470735881892983351682553205807088347 
+****/
+b3=0.605;
+/**** AF Comment: Ramare proof gives
+   0.1333*(1+sqrt(2)+1-1/4+(4/3)*(1-1/2^(3/2)))/10^(9/2) + 3/Pi^2 +  1/2-1/5+1/4/10^9 = 0.60398052263987175434427826731955888894
+****/
+b4=0.529;
+/**** AF Comment: Ramare proof gives
+    0.4283 + (2.047+0.0194)/log(10^9) = 0.52801401304498661962869919978325252689
+****/
+
+/*Priessman*/
+m0=sqrt(1+2/3*sqrt(6/5));
+
+/*Final Bound constants Lemma 4.14*/
+R = 5.5666305;
+/***  AF Comment: More precisely
+    R= 5.573412 
+***/
+
+/*Platt's verification*/
+Hplat=30610046000;
+/*Gourdon's Verification*/
+Hwed=2445999556030;
+
+/**** DONE GLOBAL CONSTANTS *****/
+/**** START HELPER FUNCTIONS ****/
+
+
+
+
+/*Equation 4.16 Ialpha definition   
+   AF Note: G(n,x) -> Gamma^(n)(x) (nth deriv gamma)
+            This is only used with C(=n) being 0,1,2
+            B is beta in paper
+            la is log(alpha)
+*/
+G(n,x)=(n-1)*(n-2)/2*gamma(x)-n*(n-2)*gamma'(x)+n*(n-1)/2*gamma''(x);
+Ialpha(la,A,B,C)=(2^(-(A+1)/B))*(exp(-la*(A+1)/B))*B^(-(C+1))*sum(j=0,C,binomial(C,j)*(-log(2)-la)^j*G(C-j,(A+1)/B));
+
+/*Equation 4.18 definition of U, AF NOTE: la = log(alpha)*/
+Ug(la,H0,lh0)=
+{
+  /*** eqn 4.3 ***/
+  my(c1=6/Pi^2+b2/lh0);
+
+  /*** eqn 4.4 ***/
+  my(c2=Pi*m0*b1/lh0+6*m0/Pi/H0+Pi*m0*b2/H0/lh0);
+
+
+  my(rat=c2/c1);
+
+  /*** eqn 4.17 
+       AF Note: at all times beta=2
+  ***/
+  my(J = Ialpha(la,2+1/3,2,0)+rat*Ialpha(la,2-2/3,2,0)+
+        (2*Ialpha(la,2+1/3,2,1)+2*rat*Ialpha(la,2-2/3,2,1))/lh0+
+        (Ialpha(la,2+1/3,2,2)+rat*Ialpha(la,2-2/3,2,2))/(lh0)^2+
+        2*a2*(Ialpha(la,2+1/6,2,0)+rat*Ialpha(la,2-5/6,2,0))/(a1*H0^(1/6)*lh0)+
+        2*a2*(Ialpha(la,2+1/6,2,1)+rat*Ialpha(la,2-5/6,2,1))/(a1*H0^(1/6)*(lh0)^2)+
+        (a2)^2*(Ialpha(la,2,2,0)+rat*Ialpha(la,2-1,2,0))/((a1)^2*H0^(1/3)*(lh0)^2));
+
+  /*** eqn 4.7 ***/
+  my( c3=(a3)^2*(c1)*lh0 );
+
+  /*** eqn 4.8 ***/
+  my( c4=c1*(a1)^2*(1+1/sqrt(c3))^2 );
+ 
+  /*** omega_1 squared  eqn 3.18 at omega_1(1/2,H0,alpha)^2 ***/
+  my( omega_sqd = exp(exp(la)/2/H0^2));
+ 
+ /*** equation 4.18 ***/
+  return( 4*exp(la)*2*c4*omega_sqd*J );
+}
+
+
+/*Equation 4.19 definition of V*/
+
+Vg(la,delta,H0,lh0)=
+{
+    /*** eqn 4.10 ***/
+    my(c5=Pi*m0*b4/2/delta*(1+2*delta/lh0)^2*exp(2*delta*Euler/lh0));
+
+    /*** eqn 4.11 ***/
+    my(c6=b4/5/delta/exp(delta)*(1+delta/lh0)^2+b3*exp(-2*delta)/(lh0)^2);
+    my(ia1=Ialpha(la,1,2,0));
+    my(ia2=Ialpha(la,2,2,0));
+
+    /*** eqn 4.20  AF NOTE: at all times T=H0***/
+    my(K = ((c5+c6*Pi*m0/H0)*ia1+c6*ia2));
+
+    /*** AF note: omega_1(1+delta/log(H0),H0,alpha)^2 ***/
+    my( omega_sqd = exp(2*exp(la)*(1+delta/lh0)^2/H0^2) );
+    
+    /*** eqn 4.19 ***/
+    return(8*exp(la)*omega_sqd*K);
+}
+
+/**** eqn 4.45   AF NOTE: b6 not always evaluated at H0 
+                          note simplification of expression
+****/
+b6(Eta,H)=(1+Eta)/Eta/(H^Eta)*(log(H)+1/Eta+Euler+7*Eta/12/(1+Eta)/H);
+Eta0=solve(t=0.01,0.5,b6(t,10^9)-1);
+/*** AF Comment: The above does not depend on parameters
+   Eta0 = 0.23621211911267764292708084848811699745
+   See Lemma 4.14
+***/
+
+C7(Eta,H0,lh0)=
+{
+    my( lg2 = log(2) ); 
+    my( zeta_1_eta = zeta(1+Eta) );
+    my( zeta_2_1_eta = zeta(2*(1+Eta)) );
+
+    /*** eqn 4.44 ***/
+    my( b5 = (zeta_1_eta)^4/(zeta_2_1_eta)^2+2*(zeta_1_eta)^2/zeta_2_1_eta );
+
+    /*** eqn 4.50 ***/
+    my( b7 = (1+2/3.006/zeta_1_eta/(H0)^(1+Eta))*(3.006*zeta_1_eta)^2 );
+
+    /*** eqn 4.51 ***/
+    my( b8 = sqrt((2+Eta)^2/(H0-1)^2+((1+2*Eta)/(H0-1)+1)^2) );
+
+    /*** eqn 4.59 ***/
+    my( b9 = Pi*(log(b7)/lg2+log(b5)/lg2-2*log(1-(b6(Eta,10^9))^2)/lg2+1)+(2+4*Eta)/lg2*log(b8/2/Pi));
+    
+    /*** eqn 4.56 ***/
+    return((2*(1+2*Eta)+2*Pi*(1+Eta))/lg2+b9/lh0);
+}
+
+/*** eqn 4.68  AF Note: b11 evaluated twice ***/
+b11(t,lh0)=1+3/(t-1)/lh0+6/(t-1)^2/(lh0)^2+6/(t-1)^3/(lh0)^3;
+C8(mu,H0,lh0)=
+{
+   my( b6_mu_m1_sq = (b6(mu-1,H0))^2 );
+
+   /*** eqn 4.66 ***/
+   my( b10=-log(1-b6_mu_m1_sq)/b6_mu_m1_sq );
+
+   /*** eqn 4.63 ***/
+   return( (1/2) * (b10*(lh0)^2/(H0)^(2*(mu-1))*(4*mu*b11(2*mu,lh0)/(2*mu-1)+2*Pi*m0*(2*mu-1)*b11(2*mu-1,lh0)/(mu-1))));
+}
+/**** NOTE MODIFICATION TO C8 above****/
+
+
+/**** END HELPER FUNCTIONS ****/
+/**** START IMPORTANT FUNCTIONS ****/
+
+
+get_A(la,delta,d,s,H0)=
+{
+   /*** NOTE la is log(alpha) ***/
+   my( lh0 = log(H0) );
+   my( llh0 = log(lh0) );
+   
+   /*** eqn 4.72 ***/
+   return(((1/2/(1-1/(H0-1))^2)*exp(8/3*delta*(2*s-1)+4*delta*(2*s-1)*llh0/(lh0+2*delta))*(Ug(la,H0,lh0))^(2*(1-s)+2*d/lh0+2*delta/(lh0+2*delta)*(2*s-1))*(Vg(la,delta,H0,lh0))^(2*s-1)*exp((2*d*llh0)/lh0+8*d/3+2*exp(la)))/2/Pi/d);
+}
+
+
+global(myMuForPrinting);
+get_B(H0,s,d) = 
+{
+   /*** Note optimization strategy
+        We do not currently report to user values chosen for Eta0, Eta1, mu
+
+        Eta1 should be in [Eta0,1/2) but we seem to allow 0.5
+        mu should be in [1+Eta0,1+Eta1] but we force mu>1+Eta0
+
+        mu=1+Eta0+10^(-10) for H > 10^11
+   ***/
+   my(Eta1,mu);
+   my( lh0 = log(H0) );
+   Eta1=solve(t=Eta0+1E-10,0.5, C7'(t,H0,lh0));
+   my( c7 = C7(Eta1,H0,lh0) );
+   if(lh0/log(10)<11.01,mu=solve(t=1+Eta0+1E-10,1+Eta1, c7+C8'(t,H0,lh0)),mu=1+Eta0+1E-10);
+   
+   myMuForPrinting = mu;
+   /*** eqn 4.73 ***/
+
+   return ([(((mu+d/lh0-s)*c7+C8(mu,H0,lh0))/2/Pi/d), Eta1, mu]);
+}
+
+
+
+/**** END IMPORTANT FUNCTIONS ****/
+/**** START OPTIMIZATION ****/
+
+
+OptZdOnAlpha(H0, s,la_init,d,delta,PR:int,Aggress) = {
+    my( polalp=Pol(get_A(la_init+'x+ O('x^Aggress),delta,d,s,H0) ));
+    my( prr = polrootsreal( polalp' ) );
+    my( minrr = prr[1] );
+    for( i = 2, length(prr),
+         if( abs( minrr ) > abs(prr[i]), minrr = prr[i] );
+    );
+    my( optla = la_init+minrr );
+    my( res = get_A( optla,delta,d,s,H0 ) );
+    if( PR>0, printf("(H0=%i; s =%.5f; d=%0.5f; delta=%0.5f; alpha=%0.5f) Optimal = %0.10g\n",H0,s,d,delta,exp(optla),res));
+    return( [res, optla ]);
+}
+
+OptZdOnDelta(H0, s,la,d,delta_init,PR:int,Aggress) = {
+    my( poldel=Pol(get_A(la,delta_init + 'x + O('x^Aggress),d,s,H0) ));
+    my( prr = polrootsreal( poldel' ) );
+    my( minrr = prr[1] );
+    for( i = 2, length(prr),
+         if( abs( minrr ) > abs(prr[i]), minrr = prr[i] );
+    );
+    my( optdel = delta_init+minrr );
+    my( res = get_A( la,optdel,d,s,H0 ) );
+    if( PR>0, printf("(H0=%i; s =%.5f; d=%0.5f; delta=%0.5f; alpha=%0.5f) Optimal = %0.10g\n",H0,s,d,optdel,exp(la),res));
+    return( [res, optdel ]);
+}
+
+OptZdOnD(H0,s,la, d_init,delta,PR:int,Aggress) = {
+    my( pold=Pol(get_A(la,delta ,d_init + 'x + O('x^Aggress),s,H0) ));
+    my( prr = polrootsreal( pold' ) );
+    my( minrr = prr[1] );
+    for( i = 2, length(prr),
+         if( abs( minrr ) > abs(prr[i]), minrr = prr[i] );
+    );
+    my( optd = d_init+minrr );
+    my( res = get_A( la,delta,optd,s,H0 ) );
+    if( PR>0, printf("(H0=%i; s =%.5f; d=%0.5f; delta=%0.5f; alpha=%0.5f) Optimal = %0.10g\n",H0,s,optd,delta,exp(la),res));
+    return( [res, optd ]);
+}
+
+Optimize_ZD(H0,s,PR:int,{lai=0.105,deli=0.303,di=0.333,Aggress=10}) = 
+{
+    my( res = 10000 );
+    my( la=log(lai) );
+    my( delta =deli );
+    my( d = di );
+    my( res_m, res );
+    [res_m,la] = OptZdOnAlpha(H0, s,la,d,delta,PR, max(Aggress,5));
+    if( PR>0, printf("(H0=%i; s =%.5f; d=%0.5f; delta=%0.5f; alpha=%0.5f) Optimal = %0.10g\n",H0,s,d,delta,exp(la),res_m));
+    for( m=1,Aggress+5,
+        [res,delta] = OptZdOnDelta(H0, s,la,d,delta,PR, max(m,5));
+        [res,d] = OptZdOnD(H0, s,la,d,delta,PR, max(m,5));
+        [res,la] = OptZdOnAlpha(H0, s,la,d,delta,PR, max(m,5));
+        if( abs(res - res_m) < abs(res)*10^(-Aggress), break ); 
+        res_m=res;
+    );
+    return( [res,exp(la), delta, d] );
+
+}
+
+/***** END OPTIMIZATION *****/
+/***** START USER FUNCTIONS *****/
+
+global(last_lai=0.105);
+global(last_deli=0.303);
+global(last_di=0.333);
+global(Cache_C1_C2=Map());
+
+
+save_ZD_cache()=
+{ 
+    my( out_string=Strprintf("Cache_C1_C2=%Ps;\n",Cache_C1_C2));
+    my( fn=fileopen("__Cache_C1_C2","w"));
+    filewrite(fn,out_string);
+    filewrite(fn,Strprintf("x_cache_R=%Ps;\n",R));
+    filewrite(fn,Strprintf("x_cache_a1=%Ps;\n",a1));
+    filewrite(fn,Strprintf("x_cache_a2=%Ps;\n",a2));
+    filewrite(fn,Strprintf("x_cache_b1=%Ps;\n",b1));
+    filewrite(fn,Strprintf("x_cache_b2=%Ps;\n",b2));
+    filewrite(fn,Strprintf("x_cache_b3=%Ps;\n",b3));
+    filewrite(fn,Strprintf("x_cache_b4=%Ps;\n",b4));
+    fileclose(fn);
+    return;
+}
+
+load_ZD_cache({cache_file="__Cache_C1_C2",CHECK=1})=
+{
+    read(cache_file);
+    if( CHECK,
+      if( x_cache_R != R, print("R error");Cache_C1_C2=Map());
+      if( x_cache_a1 != a1, print("a1 error");Cache_C1_C2=Map());
+      if( x_cache_a2 != a2, print("a2 error");Cache_C1_C2=Map());
+      if( x_cache_b1 != b1, print("b1 error");Cache_C1_C2=Map());
+      if( x_cache_b2 != b2, print("a2 error");Cache_C1_C2=Map());
+      if( x_cache_b3 != b3, print("b3 error");Cache_C1_C2=Map());
+      if( x_cache_b4 != b4, print("b4 error");Cache_C1_C2=Map());
+    );
+    return;
+}
+
+global(XX_TRUST_CACHE=1);
+init_ZD_cache({scale=2,Aggress=20,REINIT=0})=
+{
+    my( saved_XX = XX_TRUST_CACHE );
+    if( REINIT, XX_TRUST_CACHE=0 );
+    localprec(max(38,Aggress));
+    my(den=10^scale);
+    my(res);
+    for(k=10,20,
+      H0 = 10^k;
+      print(H0);
+      forstep(s=6/10,1,1/den,
+        get_Optimal(H0,s,Aggress)
+      );
+    );
+    print(Hplat);
+    forstep(s=6/10,1,1/den,
+      get_Optimal(Hplat,s,Aggress)
+    );
+    print(Hwed);
+    forstep(s=6/10,1,1/den,
+      get_Optimal(Hwed,s,Aggress)
+    );
+    save_ZD_cache();
+    if( REINIT, XX_TRUST_CACHE=saved_XX );
+}
+
+
+get_Optimal(H0,s,{Aggress=10}) =
+{  
+   localprec(max(38,Aggress));
+   my( res );
+   if( !mapisdefined(Cache_C1_C2,[H0,s], &res),
+      my(sx=round(s*1000)/1000);
+      if( !mapisdefined(Cache_C1_C2,[H0,sx], &res),
+          my(HX=10^(floor(log(H0)/log(10))));
+          if( mapisdefined(Cache_C1_C2,[HX,sx], &res),
+              res = Optimize_ZD(H0,s,0,res[4],res[5],res[6],Aggress),
+              res = Optimize_ZD(H0,s,0,last_lai,last_deli,last_di,Aggress)
+          );
+          ,
+          res = Optimize_ZD(H0,s,0,res[4],res[5],res[6],Aggress),
+      );
+      last_lai=res[2];
+      last_deli=res[3];
+      last_di=res[4];
+      res = [res[1], get_B(H0,s,res[4]),Aggress,res[2],res[3],res[4]];
+      mapput(Cache_C1_C2,[H0,s], res);
+      ,
+      if( XX_TRUST_CACHE*res[3] < Aggress,
+         res = Optimize_ZD(H0,s,0,res[4],res[5],res[6],Aggress);
+         last_lai=res[2];
+         last_deli=res[3];
+         last_di=res[4];
+         res = [res[1], get_B(H0,s,res[4]),Aggress,res[2],res[3],res[4]];
+         mapput(Cache_C1_C2,[H0,s], res);
+      );
+   );
+   return( res );
+}
+
+D(alpha, d, delta, H0) = {
+  my(H = H0-1, term1,term2,term3,term4);
+
+  term1 = 1/(2*(1-1/H)^2);
+  term2 = exp(-(8*delta)/3 - (4*delta*log(log(H0)))/(log(H0)+2*delta) + (2*d*log(log(H0)))/(log(H0)) + (8*d)/3 + 2*alpha);
+  term3 = Ug(log(alpha),H0,log(H0))^(2 + (2*d)/(log(H0)) - (2*delta)/(log(H0)+2*delta));
+  term4 = Vg(log(alpha),delta,H0,log(H0))^(-1);
+
+  return (term1*term2*term3*term4);
+}
+
+E(alpha, d, delta, H0) = {
+  my(term1, term2, term3);
+
+  term1 = exp(16*delta/3 + (8*delta*log(log(H0)))/(log(H0)+2*delta));
+  term2 = Ug(log(alpha),H0,log(H0))^(-2 + (4*delta)/(log(H0)+2*delta));
+  term3 = Vg(log(alpha),delta,H0,log(H0))^(2);
+
+  return (term1*term2*term3);
+}
+
+F(Eta, mu, d, H0) = {
+  my(H = H0-1);
+
+  return (C7(Eta, H0, log(H0))*mu + C7(Eta, H0, log(H0))*d/log(H0) + C8(mu, H0, log(H0)));
+}
+
+
+
+tableVerification(H0, sig) = {
+  res = Optimize_ZD(H0, sig, 0);
+  temp = get_B(H0, sig, res[4]);
+  res = [res[1], temp[1], res[2], res[3], res[4], temp[2], temp[3]];
+  
+  DVal = D(res[3], res[5], res[4], H0);
+  EVal = E(res[3], res[5], res[4], H0);
+  FVal = F(temp[2], temp[3], res[5], H0);
+
+  print((DVal*EVal^sig)/(2*Pi*res[5]), " ", res[1]);
+
+  print((FVal - sig*C7(temp[2], H0, log(H0)))/2/Pi/res[5], " ", res[2]);
+
+  return(res);
+}
+
+MakeTable8(H0, sigStart, sigEnd, sigStep) = {
+  forstep(sig = sigStart, sigEnd, sigStep,
+    sig1 = sig-sigStep;
+    sig2 = sig;
+
+    res = Optimize_ZD(H0, sig2, 0);
+    temp = get_B(H0, sig2, res[4]);
+    res = [res[1], temp[1], res[2], res[3], res[4], temp[2], temp[3]];
+    
+    DVal = D(res[3], res[5], res[4], H0);
+    EVal = E(res[3], res[5], res[4], H0);
+    FVal = F(temp[2], temp[3], res[5], H0);
+    
+    A = DVal*EVal^sig2;
+    B = FVal - sig1*C7(temp[2], H0, log(H0));
+    p = 10.0^4;
+    printf("%0.2g & %0.2g & %0.4g & %0.4g & %0.4g & %0.4f & %0.4f & %0.4f & %0.4f & %0.4f & %0.4f & %0.4f \\\\\n", sig1, sig2, ceil(p*res[3])/p, ceil(p*res[4])/p, ceil(p*res[5])/p, ceil(p*DVal)/p, 
+      ceil(p*EVal)/p, ceil(p*FVal)/p, ceil(p*A)/p, ceil(p*A/2/Pi/res[5])/p, ceil(p*B)/p, ceil(p*B/2/Pi/res[5])/p);
+  );
+}
+
+MakeTable7(H0, sigStart, sigEnd, sigStep) = {
+  forstep(sig = sigStart, sigEnd, sigStep,
+    sig1 = sig;
+    sig2 = sig;
+
+    res = Optimize_ZD(H0, sig2, 0);
+    temp = get_B(H0, sig2, res[4]);
+    res = [res[1], temp[1], res[2], res[3], res[4], temp[2], temp[3]];
+    
+    DVal = D(res[3], res[5], res[4], H0);
+    EVal = E(res[3], res[5], res[4], H0);
+    FVal = F(temp[2], temp[3], res[5], H0);
+    
+    A = DVal*EVal^sig2;
+    B = FVal - sig1*C7(temp[2], H0, log(H0));
+    
+    printf("%0.3g & %0.4f & %0.4f & %0.4f & %0.4f & %0.4f & %0.4f & %0.4f \\\\\n", sig1, ceil(p*res[3])/p, ceil(p*res[4])/p, ceil(p*res[5])/p, 
+      ceil(p*A)/p, ceil(p*A/2/Pi/res[5])/p, ceil(p*B)/p, ceil(p*B/2/Pi/res[5])/p);
+  );
+}
+
+
+
+get_A_B(H0,sig1,sig2,{Aggress=10}) =
+{
+    my(res, temp, A, B, DVal, EVal, FVal);
+
+    res = get_Optimal(H0, sig2);
+    /*res = Optimize_ZD(H0, sig2, 0);*/
+    
+    temp = get_B(H0, sig2, res[4]);
+    res = [res[1], temp[1], res[4], res[5], res[6], temp[2], temp[3]];
+    
+    DVal = D(res[3], res[5], res[4], H0);
+    EVal = E(res[3], res[5], res[4], H0);
+    FVal = F(temp[2], temp[3], res[5], H0);
+    
+    A = DVal*EVal^sig2;
+    B = FVal - sig1*C7(temp[2], H0, log(H0));
+
+    return( [A, B, res[5]] );
+}
+
+PrintTable(H0,s_start,s_end,s_step,{Aggress=20}) =
+{ 
+    my(res);
+    my(sprec=ceil(abs(log(s_step)/log(10))));
+    printf("ZDMap = Map([\\\n");
+    /*printf("H0= %.0f\n",H0);*/
+    forstep(s=s_start,s_end,s_step,
+        res=get_Optimal(H0,s,Aggress);
+        /*printf("s=%.*f; d=%0.*f; delta=%0.*f; alpha=%0.*f    A=C1/2pid=%0.*g    B=C2/2pid=%0.*g\n",sprec,s,Aggress,res[6],Aggress,res[5],Aggress,res[4],Aggress,res[1],Aggress,res[2]);*/
+        printf("%0.3f, [%.g, %.g, %.g];\\\n", s, res[1], res[2], res[6]);
+    );
+    printf("]);");
+}
+
+PrintTable_html(H0,s_start,s_end,s_step,{Aggress=10}) =
+{ 
+    my(res);
+    my(sprec=ceil(abs(log(s_step)/log(10))));
+   
+    print("==============Values Used===========================<BR>");
+    print("<table><col width=50><col>");
+    printf("<TR><TD>H:</TD><TD> %.0f</TD></TR> ",H0);
+    print("</table>");
+    print("==============ZD==================================<BR>"); 
+    print("<table><col width=75><col width=125><col width=125><col width=125><col width=125><col width=125>");
+    print("<TR><TH>sig</TH><TH>d</TH><TH>delta</TH><TH>alpha</TH><TH>A=C1/2pid</TH><TH>  B=C2/2pid </TH> </TR>");
+
+    forstep(s=s_start,s_end,s_step,
+        res=get_Optimal(H0,s,Aggress);
+        printf("<TR><TD> %.*f </TD><TD> %.*f </TD><TD> %.*f</TD><TD> %.*f</TD><TD> %.*f</TD><TD> %.*f</TD></TR>\n",sprec,s,Aggress,res[6],Aggress,res[5],Aggress,res[4],Aggress,res[1],Aggress,res[2]);
+    );
+    
+    print("</table>");
+    print("====================================================<BR>"); 
+}
+
+PrintTable_tex(H0,s_start,s_end,s_step,{Aggress=10}) = 
+{
+    my(res);
+    my(sprec=ceil(abs(log(s_step)/log(10))));
+
+    printf("\\begin{table}\n\\caption{H0=%.0f}\n\begin{tabular}{|c|c|c|c|c|c|}\n",H);
+    printf("$\\sigma$ & $d$ & $\\delta$ & $\\alpha$ & $A=\\mathcal{C}_1/2\\pi d$ & $B=\\mathcal{C}_2/2\\pi d$ \\\\ \n\\hline\n");
+
+    forstep(s=s_start,s_end,s_step,
+        res=get_Optimal(H0,s,Aggress);
+        printf(" %.*f & %.*f & %.*f & %.*f & %.*f & %.*f \\\n",sprec,s,Aggress,res[6],Aggress,res[5],Aggress,res[4],Aggress,res[1],Aggress,res[2]);
+    );
+    print("\\hline\n\\end{tabular}\n\\end{table}");
+}
+
+
